@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { supabase } from '@/integrations/supabase/client';
+import { User as SupabaseUser, Session } from '@supabase/supabase-js';
 
 interface User {
   id: number;
@@ -10,9 +12,10 @@ interface User {
 }
 
 interface AuthContextType {
-  user: User | null;
-  token: string | null;
+  user: SupabaseUser | null;
+  session: Session | null;
   login: (email: string, password: string) => Promise<boolean>;
+  loginWithGoogle: () => Promise<boolean>;
   register: (userData: RegisterData) => Promise<boolean>;
   logout: () => void;
   isLoading: boolean;
@@ -36,68 +39,84 @@ export const useAuth = () => {
 };
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [user, setUser] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
+  const [user, setUser] = useState<SupabaseUser | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const { toast } = useToast();
 
   useEffect(() => {
-    const storedToken = localStorage.getItem('token');
-    const storedUser = localStorage.getItem('user');
-    
-    if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
-    }
-    setIsLoading(false);
+    // Set up auth state listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setSession(session);
+        setUser(session?.user ?? null);
+      }
+    );
+
+    // Check for existing session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setUser(session?.user ?? null);
+      setIsLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      // Simulated API call - replace with actual API endpoint
-      const response = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, senha: password }),
+      const { error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      if (response.ok) {
-        const data = await response.json();
-        setToken(data.acess_token);
-        
-        // In a real app, you'd decode the JWT or make another call to get user info
-        const mockUser: User = {
-          id: 1,
-          nome: 'Usuario',
-          email,
-          admin: false,
-          ativo: true,
-        };
-        
-        setUser(mockUser);
-        localStorage.setItem('token', data.acess_token);
-        localStorage.setItem('user', JSON.stringify(mockUser));
-        
-        toast({
-          title: "Login realizado com sucesso!",
-          description: "Bem-vindo de volta!",
-        });
-        
-        return true;
-      } else {
+      if (error) {
         toast({
           title: "Erro no login",
-          description: "Email ou senha incorretos",
+          description: error.message,
           variant: "destructive",
         });
         return false;
       }
+
+      toast({
+        title: "Login realizado com sucesso!",
+        description: "Bem-vindo de volta!",
+      });
+      return true;
     } catch (error) {
       toast({
         title: "Erro de conexão",
         description: "Não foi possível conectar ao servidor",
+        variant: "destructive",
+      });
+      return false;
+    }
+  };
+
+  const loginWithGoogle = async (): Promise<boolean> => {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/dashboard`
+        }
+      });
+
+      if (error) {
+        toast({
+          title: "Erro no login com Google",
+          description: error.message,
+          variant: "destructive",
+        });
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      toast({
+        title: "Erro de conexão",
+        description: "Não foi possível conectar com o Google",
         variant: "destructive",
       });
       return false;
@@ -106,33 +125,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const register = async (userData: RegisterData): Promise<boolean> => {
     try {
-      // Simulated API call - replace with actual API endpoint
-      const response = await fetch('/api/auth/criar_conta', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ...userData,
-          ativo: true,
-          admin: userData.admin || false,
-        }),
+      const redirectUrl = `${window.location.origin}/`;
+      
+      const { error } = await supabase.auth.signUp({
+        email: userData.email,
+        password: userData.senha,
+        options: {
+          emailRedirectTo: redirectUrl,
+          data: {
+            nome: userData.nome,
+          }
+        }
       });
 
-      if (response.ok) {
-        toast({
-          title: "Conta criada com sucesso!",
-          description: "Agora você pode fazer login",
-        });
-        return true;
-      } else {
+      if (error) {
         toast({
           title: "Erro no cadastro",
-          description: "Email já está em uso",
+          description: error.message,
           variant: "destructive",
         });
         return false;
       }
+
+      toast({
+        title: "Conta criada com sucesso!",
+        description: "Verifique seu email para confirmar a conta",
+      });
+      return true;
     } catch (error) {
       toast({
         title: "Erro de conexão",
@@ -143,11 +162,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
-  const logout = () => {
-    setUser(null);
-    setToken(null);
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
+  const logout = async () => {
+    await supabase.auth.signOut();
     
     toast({
       title: "Logout realizado",
@@ -157,8 +173,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const value = {
     user,
-    token,
+    session,
     login,
+    loginWithGoogle,
     register,
     logout,
     isLoading,

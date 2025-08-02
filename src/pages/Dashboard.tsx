@@ -218,7 +218,7 @@ const Dashboard = () => {
             
             <div className="flex items-center gap-4">
               <span className="text-sm text-muted-foreground">
-                Olá, {user?.nome}
+                Olá, {user?.user_metadata?.nome || user?.email}
               </span>
               <Button variant="outline" onClick={logout}>
                 <LogOut className="h-4 w-4 mr-2" />
@@ -294,7 +294,7 @@ const Dashboard = () => {
                   onCancel={handleCancelOrder}
                   onFinalize={handleFinalizeOrder}
                   onAddItem={handleAddItem}
-                  isAdmin={user?.admin}
+                  isAdmin={false} // Admin functionality can be added later
                 />
               ))}
             </div>
